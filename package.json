@@ -1,0 +1,32 @@
+{
+  "name": "textalive-app-basic",
+  "private": true,
+  "version": "1.0.0",
+  "description": "発声中のテキストを表示したりTextAlive ホストの有無により再生コントロールの表示状態を切り替えたりするTextAlive App APIの作例",
+  "scripts": {
+    "dev": "parcel src/index.html --dist-dir dev",
+    "build": "parcel build src/index.html --public-url ./ --dist-dir docs --no-source-maps",
+    "clean": "del-cli .parcel-cache dev docs",
+    "prebuild": "del-cli docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TextAliveJp/textalive-app-basic.git"
+  },
+  "keywords": [
+    "textalive"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/TextAliveJp/textalive-app-basic/issues"
+  },
+  "homepage": "https://github.com/TextAliveJp/textalive-app-basic#readme",
+  "dependencies": {
+    "textalive-app-api": "^0.3.0"
+  },
+  "devDependencies": {
+    "del-cli": "^4.0.1",
+    "parcel": "^2.0.0-beta.3.1"
+  }
+}
