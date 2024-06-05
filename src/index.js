@@ -1,15 +1,20 @@
-import { Player, stringToDataUrl } from "textalive-app-api";
+import * as THREE from "three";
+import { Player } from "textalive-app-api";
 
-
+/**
+ * 
+ * 3Dライブラリ「three.js」を使用したシンプルなデモ
+ * 
+ */
 class Main
 {
     constructor ()
     {
-        var canMng = new CanvasManager();
-        this._canMng = canMng;
- 
-        this._initPlayer();
+        var threeMng = new ThreeManager();
+        this._threeMng = threeMng;
 
+        this._initPlayer();
+        
         window.addEventListener("resize", () => this._resize());
         this._update();
     }
@@ -17,15 +22,32 @@ class Main
     _initPlayer ()
     {
         var player = new Player({
-            // トークンは https://developer.textalive.jp/profile で取得したものを使う
-            app: { token: "6OdzAkUG3Vc5B9nJ" },
+            app: {
+                // トークンは https://developer.textalive.jp/profile で取得したものを使う
+                token: "rR1JoTmnx0KeK0Wn",
+                parameters: [
+                    {
+                        title: "テキスト色",
+                        name: "Color",
+                        className: "Color",
+                        initialValue: "#000000"
+                    },
+                    {
+                        title: "背景色",
+                        name: "BackgroundColor",
+                        className: "Color",
+                        initialValue: "#EEEEEE"
+                    },
+                ],
+            },
             mediaElement: document.querySelector("#media")
         });
         
         player.addListener({
             onAppReady: (app) => this._onAppReady(app),
             onVideoReady: (v) => this._onVideoReady(v),
-            onTimeUpdate: (pos) => this._onTimeUpdate(pos)
+            onTimeUpdate: (pos) => this._onTimeUpdate(pos),
+            onAppParameterUpdate: (name, value) => this._onAppParameterUpdate(name, value)
         });
         this._player = player;
     }
@@ -34,18 +56,17 @@ class Main
     {
         if (! app.songUrl)
         {
-            // ラテルネ / その心に灯る色は
-            this._player.createFromSongUrl("https://piapro.jp/t/hZ35/20240130103028", {
+            // 真島ゆろ / 嘘も本当も君だから
+            this._player.createFromSongUrl("https://piapro.jp/t/YW_d/20210206123357", {
                 video: {
-                  // 音楽地図訂正履歴
-                   beatId: 4592293,
-                   chordId: 2727635,
-                   repetitiveSegmentId: 2824326,
-                   // 歌詞タイミング訂正履歴: https://textalive.jp/lyrics/piapro.jp%2Ft%2FhZ35%2F20240130103028
-                   lyricId: 59415,
-                   lyricDiffId: 13962
-                 },
-               });
+                    // 音楽地図訂正履歴: https://songle.jp/songs/2121405/history
+                    beatId: 3953908,
+                    repetitiveSegmentId: 2099661,
+                    // 歌詞タイミング訂正履歴: https://textalive.jp/lyrics/piapro.jp%2Ft%2FYW_d%2F20210206123357
+                    lyricId: 52061,
+                    lyricDiffId: 5123,
+                },
+            });
         }
 
         // 画面クリックで再生／一時停止
@@ -68,14 +89,29 @@ class Main
                 c = c.next;
             }
         }
-        this._canMng.setLyrics(lyrics);
+        this._threeMng.setLyrics(lyrics);
     }
     // 再生位置アップデート
     _onTimeUpdate (position)
     {
         this._position   = position;
         this._updateTime = Date.now();
-        this._canMng.update(position);
+
+        this._threeMng.update(position);
+    }
+    // パラメタアップデート
+    _onAppParameterUpdate (name, value)
+    {
+        var  col = value.r * 256 * 256 + value.g * 256 + value.b;
+        switch (name)
+        {
+        case "Color":
+            this._threeMng.changeColor(col);
+            break;
+        case "BackgroundColor":
+            this._threeMng.changeBackgroundColor(col);
+            break;
+        }
     }
 
     _update ()
@@ -83,13 +119,13 @@ class Main
         if (this._player.isPlaying && 0 <= this._updateTime && 0 <= this._position)
         {
             var t = (Date.now() - this._updateTime) + this._position;
-            this._canMng.update(t);
+            this._threeMng.update(t);
         }
         window.requestAnimationFrame(() => this._update());
     }
     _resize ()
     {
-        this._canMng.resize();
+        this._threeMng.resize();
     }
 }
 
@@ -101,114 +137,144 @@ class Lyric
         this.startTime = data.startTime; // 開始タイム [ms]
         this.endTime   = data.endTime;   // 終了タイム [ms]
         this.duration  = data.duration;  // 開始から終了迄の時間 [ms]
-        
-        this.x = 0; // グリッドの座標 x
-        this.y = 0; // グリッドの座標 y
-        this.isDraw = false; // 描画するかどうか
+
+        if (data.next && data.next.startTime - this.endTime < 500) this.endTime = data.next.startTime;
+        else this.endTime += 500;
     }
 }
 
-class CanvasManager
+class ThreeManager
 {
     constructor ()
     {
-        // 現在のスクロール位置（画面右上基準）
-        this._px = 0; this._py = 0;
-        // マウス位置（中心が 0, -1 ~ 1 の範囲に正規化された値）
-        this._rx = 0; this._ry = 0;
+        var w = document.documentElement.clientWidth;
+        var h = document.documentElement.clientHeight;
 
-        // １グリッドの大きさ [px]
-        this._space    = 160;
-        // スクロール速度
-        this._speed    = 1500;
-        // 楽曲の再生位置
-        this._position = 0;
-        // マウスが画面上にあるかどうか（画面外の場合 false）
-        this._isOver   = false;
-        
-        // キャンバス生成（描画エリア）
+        //
+        // THREE.js (Renderer, Scene, Camera) の初期化
+        //        
+        var renderer = new THREE.WebGLRenderer( { antialias: true, alpha: false } );
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(w, h);
+        document.getElementById("view").appendChild(renderer.domElement);
+
+        var col   = 0xeeeeee;
+        var scene = new THREE.Scene();
+        scene.background = new THREE.Color(col);
+
+        var camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100);
+        camera.position.z = 20;
+        camera.lookAt(0, 0, 0);
+
+        this._renderer = renderer;
+        this._scene    = scene;
+        this._camera   = camera;
+
+        this._color = "#000";
+
+        // 歌詞表示用ボックスの生成
         this._can = document.createElement("canvas");
         this._ctx = this._can.getContext("2d");
-        document.getElementById("view").append(this._can);
+        var tex = this._tex = new THREE.Texture(this._can);
+        var mat = this._mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.4, side: THREE.DoubleSide });
+        var box = this._box = new THREE.Mesh(new THREE.BoxGeometry(10, 10, 10), mat);
+        scene.add(box);     
         
-        // マウス（タッチ）イベント
-        document.addEventListener("mousemove",  (e) => this._move(e));
-        document.addEventListener("mouseleave", (e) => this._leave(e));
-        if ("ontouchstart" in window)
-        {
-            // グリッドの大きさ／スクロール速度半分
-            this._space *= 0.5;
-            this._speed *= 0.5;
-            document.addEventListener("touchmove",  (e) => this._move(e));
-            document.addEventListener("touchend", (e) => this._leave(e));
-        }
-
-        this.resize();
+        this._drawFrame();
     }
 
+    // 色の変更（外枠＆文字）
+    changeColor (color)
+    {
+        var col = color.toString(16);
+        for (var i = col.length; i < 6; i ++) col = "0" + col;
+        this._color = "#" + col;
+        
+        this._drawFrame();
+    }
+    // 背景色の変更
+    changeBackgroundColor (color)
+    {
+        this._scene.background.set(color);
+    }
     // 歌詞の更新
     setLyrics (lyrics)
     {
         this._lyrics = lyrics;
     }
+
     // 再生位置アップデート
     update (position)
     {
-        // マウスが画面外の時、オートモード
-        if (! this._isOver)
-        {
-            this._rx = Math.sin(position / 1234 + 0.123) * 0.3 + 0.2;
-            this._ry = Math.cos(position / 1011 + 0.111) * 0.5;
-            this._mouseX = this._stw * (this._rx + 1) / 2;
-            this._mouseY = this._sth * (this._ry + 1) / 2;
-        }
-        // マウス位置に応じてスクロール位置の更新
-        var delta = (position - this._position) / 1000;
-        this._px += - this._rx * delta * this._speed;
-        this._py += - this._ry * delta * this._speed;
-
-    
         this._position = position;
+        if (! this._lyrics) return;
+
+        // 外枠を残してキャンバスをクリア
+        this._ctx.clearRect(8, 8, this._can.width - 16, this._can.height - 16);
+        var tk = "";
+
+        for (var i = 0, l = this._lyrics.length; i < l; i ++)
+        {
+            var lyric = this._lyrics[i];
+            // 開始タイム < 再生位置 && 再生位置 < 終了タイム
+            if (lyric.startTime <= position && position < lyric.endTime)
+            {
+                // 歌詞の描画
+                var progress = this._easeOutBack(Math.min((position - lyric.startTime) / Math.min(lyric.endTime - lyric.startTime, 200), 1));
+                tk = lyric.text + progress;
+                if (this._tk != tk) this._drawText(lyric.text, progress);
+                break;
+            }
+        }
+        // テクスチャの更新
+        if (this._tk != tk) this._tex.needsUpdate = true;
+        this._tk = tk;
+
+        // ボックスの回転
+        this._box.rotation.set(position / 1234, position / 2345, position / 3456);
+
+        this._renderer.render(this._scene, this._camera);
     }
     // リサイズ
     resize ()
     {
-        this._can.width  = this._stw = document.documentElement.clientWidth;
-        this._can.height = this._sth = document.documentElement.clientHeight;
+        var stw = this._stw = document.documentElement.clientWidth;
+        var sth = this._sth = document.documentElement.clientHeight;
+        
+        this._camera.aspect = stw / sth;
+        this._camera.updateProjectionMatrix();
+        
+        this._renderer.setSize(stw, sth);
     }
     
-    // "mousemove" / "touchmove"
-    _move (e)
+    // 外枠（ワイヤーフレーム）の描画
+    _drawFrame ()
     {
-        var mx = 0;
-        var my = 0;
+        var can = this._can;
+        var ctx = this._ctx;
 
-        if (e.touches)
-        {
-            mx = e.touches[0].clientX;
-            my = e.touches[0].clientY;
-        }
-        else
-        {
-            mx = e.clientX;
-            my = e.clientY;
-        }
-        this._mouseX = mx;
-        this._mouseY = my;
+        can.width = can.height = 512;
 
-        this._rx = (mx / this._stw) * 2 - 1;
-        this._ry = (my / this._sth) * 2 - 1;
-
-        this._isOver = true;
+        ctx.strokeStyle = this._color;
+        ctx.lineWidth = 8;
+        ctx.rect(0, 0, can.width, can.height);
+        ctx.stroke();
+        this._tex.needsUpdate = true;
     }
-    // "mouseleave" / "touchend"
-    _leave (e)
+    // 文字の描画
+    _drawText (text, progress)
     {
-        this._isOver = false;
-    }
+        var can = this._can;
+        var ctx = this._ctx;
 
-    
-    
+        var size = can.width;
+        var fontSize = size * 0.5 * progress;
+        ctx.textAlign = "center";
+        ctx.fillStyle = this._color;
+        ctx.font = "bold " + fontSize + "px sans-serif";
+
+        ctx.fillText(text, size/2, size/2 + fontSize * 0.37);
+    }
     _easeOutBack (x) { return 1 + 2.70158 * Math.pow(x - 1, 3) + 1.70158 * Math.pow(x - 1, 2); }
 }
 
