@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { Player } from "textalive-app-api";
 
 /**
- * 
+ * これはコミット用
  * 3Dライブラリ「three.js」を使用したシンプルなデモ
  * 
  */
